@@ -65,6 +65,21 @@ usertrap(void)
     intr_on();
 
     syscall();
+  } else if(r_scause() == 13 || r_scause() == 15) {
+    // load page fault 和 write page fault
+    // 使用 stval 获取发生缺页异常的用户空间虚拟地址
+    uint64 va = r_stval();
+    // 获取虚拟地址下界
+    va = PGROUNDDOWN(va);
+    // 分配一页
+    char *mem = kalloc();
+    if(mem == 0)
+      panic("no memory when page fault in usertrap");
+    // 置空一页
+    memset(mem, 0, PGSIZE);
+    // 把这一页映射给用户空间 va
+    if(mappages(p->pagetable, va, PGSIZE, (uint64)mem, PTE_W|PTE_X|PTE_R|PTE_U) != 0)
+      panic("mapping failure when page fault in usertrap");
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {
