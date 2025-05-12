@@ -29,6 +29,37 @@ trapinithart(void)
   w_stvec((uint64)kernelvec);
 }
 
+int
+handle_page_fault(uint64 va, int kill) {
+  struct proc *p = myproc();
+  // 如果一个进程在用sbrk()分配的虚拟内存范围之外的地址上发生页面错误，则杀死该进程。
+  // 处理比用户栈栈顶更低的无效地址的页面故障。
+  // 遇到这两种情况直接返回
+  if(va >= p->sz || va < p->trapframe->sp) {
+    // 如果是 read/write 等系统调用，越界返回 -1 即可
+    if(kill)
+      p->killed = 1;
+    return -1;
+  }
+  // 运行到这里，说明要分配内存页
+  // 获取虚拟地址下界
+  va = PGROUNDDOWN(va);
+  // 分配一页
+  char *mem = kalloc();
+  if(mem == 0) {
+    // 内存不足则杀死进程，并返回
+    // 哪怕是 read/write 等系统调用，内存不足也当被 kill
+    p->killed = 1;
+    return -1;
+  }
+  // 置空一页
+  memset(mem, 0, PGSIZE);
+  // 把这一页映射给用户空间 va
+  if(mappages(p->pagetable, va, PGSIZE, (uint64)mem, PTE_W|PTE_X|PTE_R|PTE_U) != 0)
+    panic("mapping failure when page fault in handle_page_fault");
+  return 0;
+}
+
 //
 // handle an interrupt, exception, or system call from user space.
 // called from trampoline.S
@@ -69,17 +100,7 @@ usertrap(void)
     // load page fault 和 write page fault
     // 使用 stval 获取发生缺页异常的用户空间虚拟地址
     uint64 va = r_stval();
-    // 获取虚拟地址下界
-    va = PGROUNDDOWN(va);
-    // 分配一页
-    char *mem = kalloc();
-    if(mem == 0)
-      panic("no memory when page fault in usertrap");
-    // 置空一页
-    memset(mem, 0, PGSIZE);
-    // 把这一页映射给用户空间 va
-    if(mappages(p->pagetable, va, PGSIZE, (uint64)mem, PTE_W|PTE_X|PTE_R|PTE_U) != 0)
-      panic("mapping failure when page fault in usertrap");
+    handle_page_fault(va, 1);
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {
